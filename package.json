@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "trimble-connect-workspace-api": "^0.3.33"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
