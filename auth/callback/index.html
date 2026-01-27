@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trimble OAuth Callback</title>
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        padding: 24px;
+        line-height: 1.4;
+      }
+      .error {
+        color: #b00020;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Processing Trimble login...</div>
+    <script>
+      (function () {
+        var statusEl = document.getElementById("status");
+        var params = new URLSearchParams(window.location.search);
+        var code = params.get("code");
+        var state = params.get("state");
+        var error = params.get("error");
+        var errorDescription = params.get("error_description");
+
+        if (error) {
+          statusEl.className = "error";
+          statusEl.textContent =
+            "OAuth error: " + error + (errorDescription ? " (" + errorDescription + ")" : "");
+          return;
+        }
+
+        if (!code) {
+          statusEl.className = "error";
+          statusEl.textContent = "Geen authorization code gevonden in callback.";
+          return;
+        }
+
+        var pathname = window.location.pathname;
+        var baseIndex = pathname.indexOf("/auth/callback");
+        var basePath = baseIndex >= 0 ? pathname.slice(0, baseIndex + 1) : "/";
+        var query = window.location.search || "";
+        var hashTarget = basePath + "#/auth/callback" + query;
+
+        statusEl.textContent = "Redirecting...";
+        window.location.replace(hashTarget);
+      })();
+    </script>
+  </body>
+</html>
