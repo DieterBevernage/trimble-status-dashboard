@@ -1,7 +1,7 @@
 import { generateCodeChallenge, generateCodeVerifier, generateRandomState } from "./pkce";
 
 const CLIENT_ID = "3989aeb5-b69f-4ce4-b0c6-94f59858cf66";
-const REDIRECT_URI = "https://dieterbevernage.github.io/trimble-status-dashboard/#/auth/callback";
+const REDIRECT_URI = "https://dieterbevernage.github.io/trimble-status-dashboard/auth/callback";
 const AUTHORIZE_ENDPOINT = "https://id.trimble.com/oauth/authorize";
 const TOKEN_ENDPOINT = "https://id.trimble.com/oauth/token";
 const SCOPES = ["openid", "profile"];
