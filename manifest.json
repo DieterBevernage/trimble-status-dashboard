@@ -1,7 +1,8 @@
 {
   "id": "trimble-status-dashboard",
-  "name": "Status Dashboard",
+  "name": "Trimble Status Dashboard",
   "version": "0.1.0",
   "type": "workspace",
-  "url": "https://dieterbevernage.github.io/trimble-status-dashboard/"
+  "url": "https://dieterbevernage.github.io/trimble-status-dashboard/",
+  "icon": "https://dieterbevernage.github.io/trimble-status-dashboard/icon.svg"
 }
