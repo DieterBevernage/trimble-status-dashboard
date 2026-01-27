@@ -1,15 +1,22 @@
 import React from "react";
+import type { WorkspaceAPI } from "trimble-connect-workspace-api";
+import { TrimbleViewer } from "./features/viewer/TrimbleViewer";
+import { ProjectPickerPanel } from "./features/projects/ProjectPickerPanel";
+
 import { ElementsPanel } from "./features/elements/ElementsPanel";
 import { TimelinePanel } from "./features/timeline/TimelinePanel";
 import type { ElementRecord, Status, StatusChange } from "./core/types/domain";
 import { makeDemoElements, makeDemoHistory } from "./data/demoData";
-import type { WorkspaceAPI } from "trimble-connect-workspace-api";
-import { TrimbleViewer } from "./features/viewer/TrimbleViewer";
+
+type TcProject = { id: string; name: string };
 
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const dossierId = params.get("dossierId") ?? "demo";
 
+  // ---------------------------
+  // DATA (demo)
+  // ---------------------------
   const [elements, setElements] = React.useState<ElementRecord[]>(() => makeDemoElements(dossierId));
   const [historyById, setHistoryById] = React.useState<Record<string, StatusChange[]>>(() =>
     makeDemoHistory(makeDemoElements(dossierId))
@@ -21,9 +28,6 @@ export default function App() {
   // anchor voor shift-select ranges
   const [lastAnchorId, setLastAnchorId] = React.useState<string | null>(null);
 
-  const [wsApi, setWsApi] = React.useState<WorkspaceAPI | null>(null);
-
-  // Als dossierId wijzigt (andere page), reset demo data
   React.useEffect(() => {
     const next = makeDemoElements(dossierId);
     setElements(next);
@@ -33,52 +37,101 @@ export default function App() {
     setLastAnchorId(null);
   }, [dossierId]);
 
+  // ---------------------------
+  // TRIMBLE CONNECT (viewer + projects)
+  // ---------------------------
+  const [wsApi, setWsApi] = React.useState<WorkspaceAPI | null>(null);
+  const [projects, setProjects] = React.useState<TcProject[]>([]);
+  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
 
-  function clearViewerSelection() {
-    // best-effort: in sommige builds heet het clearSelection, in andere setSelection([])
-    const v: any = wsApi?.viewer;
-    v?.clearSelection?.();
-    v?.setSelection?.([]);
-  }
+  // UI toggle: project picker tonen of verbergen
+  const [showProjectPicker, setShowProjectPicker] = React.useState(true);
 
-  function applyStatusBulk(newStatus: Status) {
-    const now = new Date().toISOString();
+  // Projecten ophalen zodra WorkspaceAPI klaar is
+  React.useEffect(() => {
+    if (!wsApi) return;
 
-    // Update current status voor geselecteerden
-    setElements((prev) =>
-      prev.map((e) => {
-        if (!selectedIds.includes(e.elementId)) return e;
-        return { ...e, currentStatus: newStatus };
-      })
-    );
+    (async () => {
+      try {
+        const projApi = (wsApi as any).project ?? (wsApi as any).projects;
+        const listFn =
+          projApi?.getProjects ??
+          projApi?.listProjects ??
+          projApi?.getAllProjects;
 
-    // Append history events
-    setHistoryById((prev) => {
-      const next = { ...prev };
+        if (!listFn) {
+          console.warn("Geen project listing functie gevonden op api.project");
+          return;
+        }
 
-      for (const id of selectedIds) {
-        const old = elements.find((x) => x.elementId === id)?.currentStatus ?? null;
-        const arr = next[id] ? [...next[id]] : [];
+        const result = await listFn.call(projApi);
 
-        arr.push({
-          elementId: id,
-          oldStatus: old,
-          newStatus,
-          changedAt: now,
-          changedBy: "you",
-        });
+        const normalized: TcProject[] = (result ?? [])
+          .map((p: any) => ({
+            id: p.id ?? p.projectId ?? p.uuid,
+            name: p.name ?? p.projectName ?? p.title ?? "(no name)",
+          }))
+          .filter((p: TcProject) => !!p.id);
 
-        next[id] = arr;
+        setProjects(normalized);
+      } catch (e) {
+        console.error("Projects ophalen faalde:", e);
+      }
+    })();
+  }, [wsApi]);
+
+  // Project selecteren → modellen laden
+  async function pickProject(projectId: string) {
+    if (!wsApi) return;
+
+    try {
+      setActiveProjectId(projectId);
+
+      const projectApi = (wsApi as any).project ?? (wsApi as any).projects;
+      const setFn = projectApi?.setProject ?? projectApi?.selectProject;
+      if (!setFn) throw new Error("Geen setProject functie gevonden.");
+
+      await setFn.call(projectApi, projectId);
+
+      const modelApi = (wsApi as any).model ?? (wsApi as any).models;
+      const getModelsFn =
+        modelApi?.getModels ??
+        modelApi?.listModels ??
+        modelApi?.getAllModels;
+
+      if (!getModelsFn) throw new Error("Geen getModels functie gevonden.");
+
+      const models = await getModelsFn.call(modelApi);
+
+      const viewerApi = (wsApi as any).viewer ?? (wsApi as any).embed;
+      const loadFn =
+        viewerApi?.loadModels ??
+        viewerApi?.openModels ??
+        viewerApi?.setModels;
+
+      if (!loadFn) {
+        console.warn("Geen loadModels/openModels/setModels functie gevonden.");
+        return;
       }
 
-      return next;
-    });
+      // Sommige builds verwachten ids, andere volledige objects: eerst ids proberen
+      const modelIds = (models ?? [])
+        .map((m: any) => m.id ?? m.modelId)
+        .filter(Boolean);
+
+      await loadFn.call(viewerApi, modelIds.length ? modelIds : models);
+    } catch (e) {
+      console.error("Project kiezen / models laden faalde:", e);
+    }
   }
 
+  // ---------------------------
+  // UI selection logic (multi-select zonder checkbox)
+  // ---------------------------
   function handleRowMouseDown(id: string, ev: React.MouseEvent) {
-    ev.preventDefault(); // voorkomt tekst-selectie bij shift-click etc.
+    ev.preventDefault();
 
-    const isCtrl = ev.ctrlKey || ev.metaKey; // metaKey voor Mac
+    const isCtrl = ev.ctrlKey || ev.metaKey;
     const isShift = ev.shiftKey;
 
     setActiveId(id);
@@ -86,20 +139,16 @@ export default function App() {
     setSelectedIds((prev) => {
       const ids = elements.map((x) => x.elementId);
 
-      // SHIFT: range select vanaf anchor
       if (isShift && lastAnchorId) {
         const a = ids.indexOf(lastAnchorId);
         const b = ids.indexOf(id);
         if (a === -1 || b === -1) {
-          // fallback: enkel deze
           setLastAnchorId(id);
           return [id];
         }
-
         const [start, end] = a < b ? [a, b] : [b, a];
         const range = ids.slice(start, end + 1);
 
-        // SHIFT + CTRL: range toevoegen aan bestaande selectie
         if (isCtrl) {
           const set = new Set(prev);
           for (const r of range) set.add(r);
@@ -107,27 +156,50 @@ export default function App() {
           return Array.from(set);
         }
 
-        // SHIFT zonder CTRL: range vervangt selectie
         setLastAnchorId(id);
         return range;
       }
 
-      // CTRL: toggle
       if (isCtrl) {
         const set = new Set(prev);
         if (set.has(id)) set.delete(id);
         else set.add(id);
-
         setLastAnchorId(id);
         return Array.from(set);
       }
-
-      // gewone click: enkel deze
       setLastAnchorId(id);
       return [id];
     });
   }
 
+  function applyStatusBulk(newStatus: Status) {
+    const now = new Date().toISOString();
+
+    setElements((prev) =>
+      prev.map((e) => (selectedIds.includes(e.elementId) ? { ...e, currentStatus: newStatus } : e))
+    );
+
+    setHistoryById((prev) => {
+      const next = { ...prev };
+      for (const id of selectedIds) {
+        const old = elements.find((x) => x.elementId === id)?.currentStatus ?? null;
+        const arr = next[id] ? [...next[id]] : [];
+        arr.push({
+          elementId: id,
+          oldStatus: old,
+          newStatus,
+          changedAt: now,
+          changedBy: "you",
+        });
+        next[id] = arr;
+      }
+      return next;
+    });
+  }
+
+  // ---------------------------
+  // LAYOUT
+  // ---------------------------
   return (
     <div style={{ height: "100vh", width: "100vw", overflow: "hidden" }}>
       <div
@@ -142,7 +214,7 @@ export default function App() {
           minHeight: 0,
         }}
       >
-        {/* TOP: Viewer – 50% */}
+        {/* TOP: Viewer (50%) */}
         <div
           style={{
             flex: "0 0 50%",
@@ -152,43 +224,63 @@ export default function App() {
             padding: 8,
             boxSizing: "border-box",
             overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
           }}
         >
+          {/* Viewer toolbar */}
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ fontWeight: 600 }}>Viewer</div>
+
             <div style={{ fontSize: 12, opacity: 0.7 }}>
-              Status: {wsApi ? "Connected ✅" : "Connecting…"}
+              API: {wsApi ? "Connected ✅" : "Connecting…"}
             </div>
-            <div style={{ marginLeft: "auto" }}>
-              <button onClick={clearViewerSelection} disabled={!wsApi} style={{ padding: "6px 10px" }}>
-                Clear selection
+
+            {activeProjectId && (
+              <div style={{ fontSize: 12, opacity: 0.7 }}>
+                Project: {projects.find((p) => p.id === activeProjectId)?.name ?? activeProjectId}
+              </div>
+            )}
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <button
+                onClick={() => setShowProjectPicker((v) => !v)}
+                style={{ padding: "6px 10px" }}
+                disabled={!wsApi}
+              >
+                {showProjectPicker ? "Hide projects" : "Show projects"}
               </button>
             </div>
           </div>
 
-          <div style={{ height: "calc(100% - 36px)", marginTop: 8 }}>
-            <TrimbleViewer
-              onApiReady={setWsApi}
-              onViewerSelectionChanged={(arg) => {
-                // arg.data bevat de selection (later mappen naar jouw elementIds)
-                console.log("Viewer selection changed:", arg);
-              }} />
-          </div>
+          {/* Viewer content: (optioneel) project picker + viewer */}
+          <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 8 }}>
+            {showProjectPicker && (
+              <div style={{ width: 320, flexShrink: 0, minHeight: 0 }}>
+                <ProjectPickerPanel
+                  projects={projects}
+                  activeProjectId={activeProjectId}
+                  onPick={pickProject}
+                />
+              </div>
+            )}
 
-          {/*<div style={{ fontWeight: 600 }}>Viewer (Trimble komt hier)</div>*/}
-          <div style={{ opacity: 0.7, marginTop: 6 }}>Dossier: {dossierId}</div>
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+              <TrimbleViewer
+                onApiReady={setWsApi}
+                onViewerSelectionChanged={(data) => {
+                  // later: map viewer selection -> selectedIds
+                  console.log("Viewer selection changed:", data);
+                }}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* BOTTOM: 50% */}
-        <div
-          style={{
-            flex: "0 0 50%",
-            minHeight: 0,
-            display: "flex",
-            gap: 8,
-          }}
-        >
-          {/* Elementenlijst (intern scroll) */}
+        {/* BOTTOM: List + Timeline (50%) */}
+        <div style={{ flex: "0 0 50%", minHeight: 0, display: "flex", gap: 8 }}>
+          {/* Elementenlijst */}
           <div
             style={{
               flex: 1,
@@ -210,7 +302,7 @@ export default function App() {
             />
           </div>
 
-          {/* Tijdlijn (intern scroll) */}
+          {/* Tijdlijn */}
           <div
             style={{
               width: 360,
@@ -223,10 +315,14 @@ export default function App() {
               overflow: "auto",
             }}
           >
-            <TimelinePanel selectedIds={selectedIds} activeId={activeId} historyByElementId={historyById} />
+            <TimelinePanel
+              selectedIds={selectedIds}
+              activeId={activeId}
+              historyByElementId={historyById}
+            />
           </div>
         </div>
       </div>
-    </div >
+    </div>
   );
 }

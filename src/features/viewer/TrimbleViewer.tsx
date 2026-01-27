@@ -8,17 +8,16 @@ import {
 
 type Props = {
   onApiReady?: (api: WorkspaceAPI) => void;
-  onViewerSelectionChanged?: (sel: any) => void; // later typ je dit strikter
+  onViewerSelectionChanged?: (sel: unknown) => void;
 };
 
 export function TrimbleViewer({ onApiReady, onViewerSelectionChanged }: Props) {
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
 
   React.useEffect(() => {
-    // nodig om messages van/naar de iframe te ontvangen
     window.addEventListener("message", dispatcherEventListener);
     return () => window.removeEventListener("message", dispatcherEventListener);
-  }, []); // :contentReference[oaicite:1]{index=1}
+  }, []);
 
   React.useEffect(() => {
     const iframe = iframeRef.current;
@@ -27,22 +26,20 @@ export function TrimbleViewer({ onApiReady, onViewerSelectionChanged }: Props) {
     let cancelled = false;
 
     (async () => {
-      // Embed URL voor de Connect viewer
-      const src = getConnectEmbedUrl("prod"); // int/qa/stage/prod :contentReference[oaicite:2]{index=2}
-      iframe.src = src;
+      iframe.src = getConnectEmbedUrl("prod");
 
-      // Connect naar de viewer in de iframe
-const api = await connect(
-  iframe,
-  (event: string, data: unknown) => {
-    if (event === "viewer.onSelectionChanged") {
-      onViewerSelectionChanged?.(data);
-    }
-  }
-);
+      const api = await connect(
+        iframe,
+        (event: string, data: unknown) => {
+          if (event === "viewer.onSelectionChanged") {
+            onViewerSelectionChanged?.(data);
+          }
+        }
+      );
 
-      if (cancelled) return;
-      onApiReady?.(api);
+      if (!cancelled) {
+        onApiReady?.(api);
+      }
     })().catch(console.error);
 
     return () => {
