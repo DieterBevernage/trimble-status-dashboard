@@ -1,0 +1,7 @@
+{
+  "id": "trimble-status-dashboard",
+  "name": "Status Dashboard",
+  "version": "0.1.0",
+  "type": "workspace",
+  "url": "http://localhost:5173/trimble-status-dashboard/"
+}

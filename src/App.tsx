@@ -82,6 +82,31 @@ export default function App() {
       }
     })();
   }, [wsApi]);
+  // Tijdelijke debug: auth + projectcontext checken zodra API klaar is
+  React.useEffect(() => {
+    if (!wsApi) return;
+
+    (async () => {
+      const api = wsApi as any;
+      console.log("API ready?", !!api);
+
+      try {
+        // 1) wie ben ik? (als dit faalt: auth/context probleem)
+        const me = await api.user?.getUserDetails?.();
+        console.log("Me:", me);
+      } catch (e) {
+        console.error("User details failed (not logged in / not in TC context):", e);
+      }
+
+      try {
+        // 2) heb ik een actieve projectcontext?
+        const p = await api.project?.getProject?.();
+        console.log("Active project:", p);
+      } catch (e) {
+        console.warn("No active project context (ok for picker app):", e);
+      }
+    })();
+  }, [wsApi]);
 
   // Project selecteren → modellen laden
   async function pickProject(projectId: string) {
