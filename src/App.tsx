@@ -1,16 +1,19 @@
 import React from "react";
 import type { WorkspaceAPI } from "trimble-connect-workspace-api";
+
 import { TrimbleViewer } from "./features/viewer/TrimbleViewer";
-import { ProjectPickerPanel } from "./features/projects/ProjectPickerPanel";
+import { ProjectPickerPanel, type TcProject } from "./features/projects/ProjectPickerPanel";
 
 import { ElementsPanel } from "./features/elements/ElementsPanel";
 import { TimelinePanel } from "./features/timeline/TimelinePanel";
+
 import type { ElementRecord, Status, StatusChange } from "./core/types/domain";
 import { makeDemoElements, makeDemoHistory } from "./data/demoData";
 
-type TcProject = { id: string; name: string };
-
 export default function App() {
+  // ---------------------------
+  // DOSSIER (later vanuit SP / mapping)
+  // ---------------------------
   const params = new URLSearchParams(window.location.search);
   const dossierId = params.get("dossierId") ?? "demo";
 
@@ -24,8 +27,6 @@ export default function App() {
 
   const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
   const [activeId, setActiveId] = React.useState<string | null>(null);
-
-  // anchor voor shift-select ranges
   const [lastAnchorId, setLastAnchorId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -38,7 +39,7 @@ export default function App() {
   }, [dossierId]);
 
   // ---------------------------
-  // TRIMBLE CONNECT (viewer + projects)
+  // TRIMBLE CONNECT
   // ---------------------------
   const [wsApi, setWsApi] = React.useState<WorkspaceAPI | null>(null);
   const [projects, setProjects] = React.useState<TcProject[]>([]);
@@ -47,7 +48,7 @@ export default function App() {
   // UI toggle: project picker tonen of verbergen
   const [showProjectPicker, setShowProjectPicker] = React.useState(true);
 
-  // Projecten ophalen zodra WorkspaceAPI klaar is
+  // Projecten ophalen wanneer api klaar is
   React.useEffect(() => {
     if (!wsApi) return;
 
@@ -61,6 +62,7 @@ export default function App() {
 
         if (!listFn) {
           console.warn("Geen project listing functie gevonden op api.project");
+          setProjects([]);
           return;
         }
 
@@ -76,6 +78,7 @@ export default function App() {
         setProjects(normalized);
       } catch (e) {
         console.error("Projects ophalen faalde:", e);
+        setProjects([]);
       }
     })();
   }, [wsApi]);
@@ -102,6 +105,7 @@ export default function App() {
       if (!getModelsFn) throw new Error("Geen getModels functie gevonden.");
 
       const models = await getModelsFn.call(modelApi);
+      console.log("Models:", models);
 
       const viewerApi = (wsApi as any).viewer ?? (wsApi as any).embed;
       const loadFn =
@@ -114,7 +118,6 @@ export default function App() {
         return;
       }
 
-      // Sommige builds verwachten ids, andere volledige objects: eerst ids proberen
       const modelIds = (models ?? [])
         .map((m: any) => m.id ?? m.modelId)
         .filter(Boolean);
@@ -126,9 +129,9 @@ export default function App() {
   }
 
   // ---------------------------
-  // UI selection logic (multi-select zonder checkbox)
+  // MULTISELECT (geen checkbox)
   // ---------------------------
-  function handleRowMouseDown(id: string, ev: React.MouseEvent) {
+  function onRowMouseDown(id: string, ev: React.MouseEvent) {
     ev.preventDefault();
 
     const isCtrl = ev.ctrlKey || ev.metaKey;
@@ -167,6 +170,7 @@ export default function App() {
         setLastAnchorId(id);
         return Array.from(set);
       }
+
       setLastAnchorId(id);
       return [id];
     });
@@ -198,7 +202,7 @@ export default function App() {
   }
 
   // ---------------------------
-  // LAYOUT
+  // LAYOUT (geen globale scrollbars)
   // ---------------------------
   return (
     <div style={{ height: "100vh", width: "100vw", overflow: "hidden" }}>
@@ -246,15 +250,15 @@ export default function App() {
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
               <button
                 onClick={() => setShowProjectPicker((v) => !v)}
-                style={{ padding: "6px 10px" }}
                 disabled={!wsApi}
+                style={{ padding: "6px 10px" }}
               >
                 {showProjectPicker ? "Hide projects" : "Show projects"}
               </button>
             </div>
           </div>
 
-          {/* Viewer content: (optioneel) project picker + viewer */}
+          {/* Viewer content */}
           <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 8 }}>
             {showProjectPicker && (
               <div style={{ width: 320, flexShrink: 0, minHeight: 0 }}>
@@ -290,14 +294,16 @@ export default function App() {
               borderRadius: 8,
               padding: 8,
               boxSizing: "border-box",
-              overflow: "auto",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
             }}
           >
             <ElementsPanel
               elements={elements}
               selectedIds={selectedIds}
               activeId={activeId}
-              onRowMouseDown={handleRowMouseDown}
+              onRowMouseDown={onRowMouseDown}
               onApplyStatusBulk={applyStatusBulk}
             />
           </div>
@@ -312,7 +318,9 @@ export default function App() {
               borderRadius: 8,
               padding: 8,
               boxSizing: "border-box",
-              overflow: "auto",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
             }}
           >
             <TimelinePanel
