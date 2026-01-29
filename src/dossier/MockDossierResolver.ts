@@ -1,5 +1,11 @@
 import type { IDossierResolver } from "./IDossierResolver";
 
+export function parseDossierNummerFromProjectName(name: string): string | null {
+  const match = name.match(/^(S|T)\d{5}\b/i);
+  if (!match) return null;
+  return match[0].toUpperCase();
+}
+
 export class MockDossierResolver implements IDossierResolver {
   private readonly mapping: Record<string, string>;
 

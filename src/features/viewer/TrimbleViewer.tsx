@@ -7,17 +7,23 @@ import {
 } from "trimble-connect-workspace-api";
 
 type Props = {
+  projectId?: string | null;
   onApiReady?: (api: WorkspaceAPI) => void;
   onViewerSelectionChanged?: (sel: unknown) => void;
 };
 
-export function TrimbleViewer({ onApiReady, onViewerSelectionChanged }: Props) {
+export function TrimbleViewer({ projectId, onApiReady, onViewerSelectionChanged }: Props) {
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
 
   React.useEffect(() => {
     window.addEventListener("message", dispatcherEventListener);
     return () => window.removeEventListener("message", dispatcherEventListener);
   }, []);
+
+  React.useEffect(() => {
+    if (!projectId) return;
+    console.log("[Viewer] init for projectId", projectId);
+  }, [projectId]);
 
   React.useEffect(() => {
     const iframe = iframeRef.current;

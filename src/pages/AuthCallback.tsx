@@ -1,6 +1,6 @@
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { clearPkceStorage, exchangeCodeForToken, storeAccessToken } from "../auth/trimbleAuth";
+import { clearPkceStorage, exchangeCodeForToken, getAuthConfig, storeAccessToken } from "../auth/trimbleAuth";
 
 export function AuthCallback() {
   const location = useLocation();
@@ -14,9 +14,13 @@ export function AuthCallback() {
       const code = params.get("code");
       const state = params.get("state");
       const errorParam = params.get("error");
+      const errorDescription = params.get("error_description");
+
+      console.log("[OAuth Callback] code present:", Boolean(code));
+      console.log("[OAuth Callback] state present:", Boolean(state));
 
       if (errorParam) {
-        setError(`OAuth error: ${errorParam}`);
+        setError(`OAuth error: ${errorParam}${errorDescription ? ` (${errorDescription})` : ""}`);
         setStatus("Login mislukt.");
         return;
       }
@@ -28,6 +32,9 @@ export function AuthCallback() {
       }
 
       try {
+        const authConfig = getAuthConfig();
+        console.log("[OAuth Callback] redirect_uri:", authConfig.redirectUri);
+
         const tokenResponse = await exchangeCodeForToken(code, state);
         storeAccessToken(tokenResponse.access_token);
         clearPkceStorage();

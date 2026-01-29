@@ -10,22 +10,31 @@ import { TimelinePanel } from "../features/timeline/TimelinePanel";
 
 import type { ElementRecord, Status, StatusChange } from "../core/types/domain";
 import { makeDemoElements, makeDemoHistory } from "../data/demoData";
+import { resolveFolderPath, listFolderFiles } from "../api/tcFolders";
+import { listModels } from "../api/tcModels";
 
 export function Dashboard() {
   const location = useLocation();
 
-  // ---------------------------
-  // DOSSIER (later vanuit SP / mapping)
-  // ---------------------------
   const params = new URLSearchParams(location.search);
-  const dossierNummer = params.get("dossierNummer") ?? "demo";
+  const queryProjectId = params.get("projectId");
+  const queryDossierNummer = params.get("dossierNummer");
+
+  const storedProjectId = sessionStorage.getItem("activeProjectId");
+  const storedDossierNummer = sessionStorage.getItem("activeDossierNummer");
+  const accessToken = sessionStorage.getItem("tc_access_token");
+
+  const projectId = queryProjectId ?? storedProjectId ?? null;
+  const dossierNummer = queryDossierNummer ?? storedDossierNummer ?? null;
 
   // ---------------------------
   // DATA (demo)
   // ---------------------------
-  const [elements, setElements] = React.useState<ElementRecord[]>(() => makeDemoElements(dossierNummer));
+  const [elements, setElements] = React.useState<ElementRecord[]>(() =>
+    dossierNummer ? makeDemoElements(dossierNummer) : []
+  );
   const [historyById, setHistoryById] = React.useState<Record<string, StatusChange[]>>(() =>
-    makeDemoHistory(makeDemoElements(dossierNummer))
+    dossierNummer ? makeDemoHistory(makeDemoElements(dossierNummer)) : {}
   );
 
   const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
@@ -33,6 +42,15 @@ export function Dashboard() {
   const [lastAnchorId, setLastAnchorId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
+    if (!dossierNummer) {
+      setElements([]);
+      setHistoryById({});
+      setSelectedIds([]);
+      setActiveId(null);
+      setLastAnchorId(null);
+      return;
+    }
+
     const next = makeDemoElements(dossierNummer);
     setElements(next);
     setHistoryById(makeDemoHistory(next));
@@ -47,6 +65,12 @@ export function Dashboard() {
   const [wsApi, setWsApi] = React.useState<WorkspaceAPI | null>(null);
   const [projects, setProjects] = React.useState<TcProject[]>([]);
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
+
+  const [modelsLoading, setModelsLoading] = React.useState(false);
+  const [modelsError, setModelsError] = React.useState<string | null>(null);
+  const [filesCount, setFilesCount] = React.useState(0);
+  const [mappedCount, setMappedCount] = React.useState(0);
+  const [loadedCount, setLoadedCount] = React.useState(0);
 
   // UI toggle: project picker tonen of verbergen
   const [showProjectPicker, setShowProjectPicker] = React.useState(true);
@@ -112,18 +136,111 @@ export function Dashboard() {
     })();
   }, [wsApi]);
 
+  // Auto-load IFC models from Productie/IFC
+  React.useEffect(() => {
+    if (!wsApi || !projectId || !accessToken) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setModelsLoading(true);
+      setModelsError(null);
+      setFilesCount(0);
+      setMappedCount(0);
+      setLoadedCount(0);
+
+      try {
+        const api = wsApi as any;
+
+        console.log("[Viewer] capability probe", {
+          viewer: Object.keys(api.viewer ?? {}),
+          models: Object.keys(api.models ?? {}),
+          embed: Object.keys(api.embed ?? {}),
+        });
+
+        const projectApi = api.project ?? api.projects;
+        const setFn = projectApi?.setProject ?? projectApi?.selectProject;
+        if (setFn) {
+          try {
+            await setFn.call(projectApi, projectId);
+          } catch (error) {
+            console.warn("[Viewer] setProject not applicable", error);
+          }
+        }
+
+        const folderId = await resolveFolderPath(projectId, ["Productie", "IFC"], accessToken);
+        if (!folderId) {
+          throw new Error("Folder Productie/IFC niet gevonden.");
+        }
+
+        const ifcFiles = await listFolderFiles(projectId, folderId, accessToken);
+        console.log("[Viewer] Productie/IFC files", ifcFiles);
+        setFilesCount(ifcFiles.length);
+
+        if (!ifcFiles.length) {
+          throw new Error("Geen IFC bestanden gevonden in Productie/IFC.");
+        }
+
+        const models = await listModels(projectId, accessToken);
+        console.log("[Viewer] Models response", models);
+
+        const fileIds = new Set(ifcFiles.map((f) => f.id));
+        const fileNames = new Set(ifcFiles.map((f) => f.name.toLowerCase()));
+
+        const mappedModels = models.filter((m) => {
+          const sourceMatch = m.sourceFileId && fileIds.has(m.sourceFileId);
+          const nameMatch = fileNames.has(m.name.toLowerCase());
+          return Boolean(sourceMatch || nameMatch);
+        });
+
+        setMappedCount(mappedModels.length);
+        if (mappedModels.length === 0) {
+          throw new Error("Geen models gevonden voor IFC files; check model endpoint response in console.");
+        }
+
+        const viewerApi = api.viewer ?? api.embed ?? api.models;
+        const loadFn =
+          viewerApi?.loadModels ??
+          viewerApi?.openModels ??
+          viewerApi?.setModels ??
+          viewerApi?.addModels ??
+          api.models?.load;
+
+        if (!loadFn) {
+          throw new Error("No model loading method found on viewer API.");
+        }
+
+        const modelIds = mappedModels.map((m) => m.id);
+        await loadFn.call(viewerApi, modelIds);
+        setLoadedCount(modelIds.length);
+      } catch (error) {
+        if (!cancelled) {
+          setModelsError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setModelsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [wsApi, projectId, accessToken]);
+
   // Project selecteren -> modellen laden
-  async function pickProject(projectId: string) {
+  async function pickProject(projectIdToPick: string) {
     if (!wsApi) return;
 
     try {
-      setActiveProjectId(projectId);
+      setActiveProjectId(projectIdToPick);
 
       const projectApi = (wsApi as any).project ?? (wsApi as any).projects;
       const setFn = projectApi?.setProject ?? projectApi?.selectProject;
       if (!setFn) throw new Error("Geen setProject functie gevonden.");
 
-      await setFn.call(projectApi, projectId);
+      await setFn.call(projectApi, projectIdToPick);
 
       const modelApi = (wsApi as any).model ?? (wsApi as any).models;
       const getModelsFn =
@@ -247,6 +364,10 @@ export function Dashboard() {
           minHeight: 0,
         }}
       >
+        <div style={{ fontSize: 12, opacity: 0.7 }}>
+          Active projectId: {projectId ?? "-"} | dossier: {dossierNummer ?? "-"}
+        </div>
+
         {/* TOP: Viewer (50%) */}
         <div
           style={{
@@ -262,6 +383,13 @@ export function Dashboard() {
             gap: 8,
           }}
         >
+          <div style={{ fontSize: 12, opacity: 0.8 }}>
+            {modelsLoading && `Loading models... (Found ${filesCount} IFC files)`}
+            {!modelsLoading && !modelsError && loadedCount > 0 &&
+              `Loaded ${loadedCount} models (mapped ${mappedCount})`}
+            {modelsError && `Model load error: ${modelsError}`}
+          </div>
+
           {/* Viewer toolbar */}
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ fontWeight: 600 }}>Viewer</div>
@@ -301,6 +429,7 @@ export function Dashboard() {
 
             <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
               <TrimbleViewer
+                projectId={projectId}
                 onApiReady={setWsApi}
                 onViewerSelectionChanged={(data) => {
                   // later: map viewer selection -> selectedIds
@@ -328,13 +457,17 @@ export function Dashboard() {
               flexDirection: "column",
             }}
           >
-            <ElementsPanel
-              elements={elements}
-              selectedIds={selectedIds}
-              activeId={activeId}
-              onRowMouseDown={onRowMouseDown}
-              onApplyStatusBulk={applyStatusBulk}
-            />
+            {dossierNummer ? (
+              <ElementsPanel
+                elements={elements}
+                selectedIds={selectedIds}
+                activeId={activeId}
+                onRowMouseDown={onRowMouseDown}
+                onApplyStatusBulk={applyStatusBulk}
+              />
+            ) : (
+              <div style={{ padding: 10, opacity: 0.7 }}>Geen dossier mapping, status blijft leeg.</div>
+            )}
           </div>
 
           {/* Tijdlijn */}
@@ -352,11 +485,15 @@ export function Dashboard() {
               flexDirection: "column",
             }}
           >
-            <TimelinePanel
-              selectedIds={selectedIds}
-              activeId={activeId}
-              historyByElementId={historyById}
-            />
+            {dossierNummer ? (
+              <TimelinePanel
+                selectedIds={selectedIds}
+                activeId={activeId}
+                historyByElementId={historyById}
+              />
+            ) : (
+              <div style={{ padding: 10, opacity: 0.7 }}>Geen dossier mapping, status blijft leeg.</div>
+            )}
           </div>
         </div>
       </div>
