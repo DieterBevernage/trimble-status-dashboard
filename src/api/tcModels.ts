@@ -1,4 +1,4 @@
-const BASE_URL = "https://app21.connect.trimble.com/tc/api/2.0";
+import { TC_API_BASE } from "./tcConfig";
 
 type ModelResponse = {
   data?: unknown;
@@ -10,9 +10,11 @@ export type TcModel = {
   id: string;
   name: string;
   sourceFileId?: string | null;
+  versionId?: string | null;
 };
 
 async function fetchJson(url: string, accessToken: string): Promise<{ ok: boolean; status: number; text: string; json: unknown | null; }> {
+  console.log("[TC API][models] GET", url);
   const response = await fetch(url, {
     method: "GET",
     headers: {
@@ -49,12 +51,13 @@ function normalizeModels(payload: unknown): TcModel[] {
       id: m.id ?? m.modelId ?? m.uuid,
       name: m.name ?? m.title ?? "(no name)",
       sourceFileId: m.sourceFileId ?? m.fileId ?? m.sourceFile?.id ?? null,
+      versionId: m.versionId ?? m.latestVersionId ?? m.version ?? null,
     }))
     .filter((m: TcModel) => Boolean(m.id));
 }
 
 export async function listModels(projectId: string, accessToken: string): Promise<TcModel[]> {
-  const url1 = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/models`;
+  const url1 = `${TC_API_BASE}/projects/${encodeURIComponent(projectId)}/models`;
   const res1 = await fetchJson(url1, accessToken);
   console.log("[Models] GET", url1, "status", res1.status);
 
@@ -63,7 +66,7 @@ export async function listModels(projectId: string, accessToken: string): Promis
     if (models.length > 0) return models;
   }
 
-  const url2 = `${BASE_URL}/models?projectId=${encodeURIComponent(projectId)}`;
+  const url2 = `${TC_API_BASE}/models?projectId=${encodeURIComponent(projectId)}`;
   const res2 = await fetchJson(url2, accessToken);
   console.log("[Models] GET", url2, "status", res2.status);
 

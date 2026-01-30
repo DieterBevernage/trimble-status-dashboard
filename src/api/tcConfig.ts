@@ -1,0 +1,1 @@
+export const TC_API_BASE = "https://app21.connect.trimble.com/tc/api/2.0";

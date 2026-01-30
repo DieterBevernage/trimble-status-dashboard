@@ -10,7 +10,7 @@ import { TimelinePanel } from "../features/timeline/TimelinePanel";
 
 import type { ElementRecord, Status, StatusChange } from "../core/types/domain";
 import { makeDemoElements, makeDemoHistory } from "../data/demoData";
-import { resolveFolderPath, listFolderFiles } from "../api/tcFolders";
+import { listFolderFiles, resolveFolderPath } from "../api/tcFolders";
 import { listModels } from "../api/tcModels";
 
 export function Dashboard() {
@@ -68,47 +68,18 @@ export function Dashboard() {
 
   const [modelsLoading, setModelsLoading] = React.useState(false);
   const [modelsError, setModelsError] = React.useState<string | null>(null);
-  const [filesCount, setFilesCount] = React.useState(0);
-  const [mappedCount, setMappedCount] = React.useState(0);
+  const [modelsFoundCount, setModelsFoundCount] = React.useState(0);
   const [loadedCount, setLoadedCount] = React.useState(0);
+
+  const lastLoadKeyRef = React.useRef<string | null>(null);
+  const inflightRef = React.useRef(false);
+  const folderProbeKeyRef = React.useRef<string | null>(null);
+  const folderProbeInflightRef = React.useRef(false);
 
   // UI toggle: project picker tonen of verbergen
   const [showProjectPicker, setShowProjectPicker] = React.useState(true);
 
-  // Projecten ophalen wanneer api klaar is
-  React.useEffect(() => {
-    if (!wsApi) return;
-
-    (async () => {
-      try {
-        const projApi = (wsApi as any).project ?? (wsApi as any).projects;
-        const listFn =
-          projApi?.getProjects ??
-          projApi?.listProjects ??
-          projApi?.getAllProjects;
-
-        if (!listFn) {
-          console.warn("Geen project listing functie gevonden op api.project");
-          setProjects([]);
-          return;
-        }
-
-        const result = await listFn.call(projApi);
-
-        const normalized: TcProject[] = (result ?? [])
-          .map((p: any) => ({
-            id: p.id ?? p.projectId ?? p.uuid,
-            name: p.name ?? p.projectName ?? p.title ?? "(no name)",
-          }))
-          .filter((p: TcProject) => !!p.id);
-
-        setProjects(normalized);
-      } catch (e) {
-        console.error("Projects ophalen faalde:", e);
-        setProjects([]);
-      }
-    })();
-  }, [wsApi]);
+  // Embedded viewer context: skip Workspace project listing (not applicable)
 
   // Tijdelijke debug: auth + projectcontext checken zodra API klaar is
   React.useEffect(() => {
@@ -125,28 +96,43 @@ export function Dashboard() {
       } catch (e) {
         console.error("User details failed (not logged in / not in TC context):", e);
       }
-
-      try {
-        // 2) heb ik een actieve projectcontext?
-        const p = await api.project?.getProject?.();
-        console.log("Active project:", p);
-      } catch (e) {
-        console.warn("No active project context (ok for picker app):", e);
-      }
     })();
   }, [wsApi]);
 
-  // Auto-load IFC models from Productie/IFC
   React.useEffect(() => {
-    if (!wsApi || !projectId || !accessToken) return;
+    if (!wsApi) return;
+
+    const api = wsApi as any;
+
+    const debug = {
+      api: Object.keys(api),
+      project: Object.keys(api.project ?? {}),
+      projects: Object.keys(api.projects ?? {}),
+      viewer: Object.keys(api.viewer ?? {}),
+      embed: Object.keys(api.embed ?? {}),
+    };
+
+    console.log("WORKSPACE_API_DEBUG_JSON");
+    console.log(JSON.stringify(debug, null, 2));
+  }, [wsApi]);
+
+  // Auto-load models via viewer API
+  React.useEffect(() => {
+    if (!wsApi || !projectId) return;
+
+    const loadKey = projectId;
+    if (inflightRef.current) return;
+    if (lastLoadKeyRef.current === loadKey) return;
+
+    inflightRef.current = true;
+    lastLoadKeyRef.current = loadKey;
 
     let cancelled = false;
 
     (async () => {
       setModelsLoading(true);
       setModelsError(null);
-      setFilesCount(0);
-      setMappedCount(0);
+      setModelsFoundCount(0);
       setLoadedCount(0);
 
       try {
@@ -158,60 +144,29 @@ export function Dashboard() {
           embed: Object.keys(api.embed ?? {}),
         });
 
-        const projectApi = api.project ?? api.projects;
-        const setFn = projectApi?.setProject ?? projectApi?.selectProject;
-        if (setFn) {
-          try {
-            await setFn.call(projectApi, projectId);
-          } catch (error) {
-            console.warn("[Viewer] setProject not applicable", error);
-          }
+        const viewerApi = api.viewer ?? {};
+        if (!viewerApi.getModels) {
+          throw new Error("viewer.getModels not available");
         }
 
-        const folderId = await resolveFolderPath(projectId, ["Productie", "IFC"], accessToken);
-        if (!folderId) {
-          throw new Error("Folder Productie/IFC niet gevonden.");
+        const models = await viewerApi.getModels();
+        const modelIds = (models ?? [])
+          .map((m: any) => m.id ?? m.modelId)
+          .filter(Boolean);
+
+        console.log("[Viewer] models found", modelIds.length);
+        setModelsFoundCount(modelIds.length);
+
+        if (!modelIds.length) {
+          throw new Error("No models found for project in viewer.");
         }
 
-        const ifcFiles = await listFolderFiles(projectId, folderId, accessToken);
-        console.log("[Viewer] Productie/IFC files", ifcFiles);
-        setFilesCount(ifcFiles.length);
-
-        if (!ifcFiles.length) {
-          throw new Error("Geen IFC bestanden gevonden in Productie/IFC.");
+        if (!viewerApi.toggleModel) {
+          throw new Error("viewer.toggleModel not available");
         }
 
-        const models = await listModels(projectId, accessToken);
-        console.log("[Viewer] Models response", models);
-
-        const fileIds = new Set(ifcFiles.map((f) => f.id));
-        const fileNames = new Set(ifcFiles.map((f) => f.name.toLowerCase()));
-
-        const mappedModels = models.filter((m) => {
-          const sourceMatch = m.sourceFileId && fileIds.has(m.sourceFileId);
-          const nameMatch = fileNames.has(m.name.toLowerCase());
-          return Boolean(sourceMatch || nameMatch);
-        });
-
-        setMappedCount(mappedModels.length);
-        if (mappedModels.length === 0) {
-          throw new Error("Geen models gevonden voor IFC files; check model endpoint response in console.");
-        }
-
-        const viewerApi = api.viewer ?? api.embed ?? api.models;
-        const loadFn =
-          viewerApi?.loadModels ??
-          viewerApi?.openModels ??
-          viewerApi?.setModels ??
-          viewerApi?.addModels ??
-          api.models?.load;
-
-        if (!loadFn) {
-          throw new Error("No model loading method found on viewer API.");
-        }
-
-        const modelIds = mappedModels.map((m) => m.id);
-        await loadFn.call(viewerApi, modelIds);
+        await viewerApi.toggleModel(modelIds, true, true);
+        console.log("[Viewer] toggled models", modelIds.length);
         setLoadedCount(modelIds.length);
       } catch (error) {
         if (!cancelled) {
@@ -221,57 +176,74 @@ export function Dashboard() {
         if (!cancelled) {
           setModelsLoading(false);
         }
+        inflightRef.current = false;
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [wsApi, projectId, accessToken]);
+  }, [wsApi, projectId]);
+
+  // Debug: resolve Productie/IFC folder and log mapped models
+  React.useEffect(() => {
+    if (!projectId || !accessToken) return;
+
+    const tokenPrefix = accessToken.slice(0, 12);
+    const probeKey = `${projectId}:${tokenPrefix}`;
+    if (folderProbeInflightRef.current) return;
+    if (folderProbeKeyRef.current === probeKey) return;
+
+    folderProbeInflightRef.current = true;
+    folderProbeKeyRef.current = probeKey;
+
+    let cancelled = false;
+
+    (async () => {
+      console.log("[IFC] resolve folder Productie/IFC start", { projectId });
+      try {
+        const folderId = await resolveFolderPath(projectId, ["Productie", "IFC"], accessToken);
+        if (!folderId) {
+          console.warn("[IFC] folder Productie/IFC not found for projectId", projectId);
+          return;
+        }
+
+        console.log("[IFC] folder Productie/IFC found", folderId);
+
+        const ifcFiles = await listFolderFiles(projectId, folderId, accessToken);
+        console.log("[IFC] IFC files found", ifcFiles.length, ifcFiles);
+
+        const models = await listModels(projectId, accessToken);
+        const fileIds = new Set(ifcFiles.map((f) => f.id));
+        const fileNames = new Set(ifcFiles.map((f) => f.name.toLowerCase()));
+
+        const mappedModels = models.filter((m) => {
+          const sourceMatch = m.sourceFileId && fileIds.has(m.sourceFileId);
+          const nameMatch = fileNames.has(m.name.toLowerCase());
+          return Boolean(sourceMatch || nameMatch);
+        });
+
+        console.log("[IFC] mapped models for IFC files", mappedModels.length, mappedModels);
+      } catch (error) {
+        if (!cancelled) {
+          console.error("[IFC] folder/model probe failed", error);
+        }
+      } finally {
+        if (!cancelled) {
+          folderProbeInflightRef.current = false;
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, accessToken]);
 
   // Project selecteren -> modellen laden
   async function pickProject(projectIdToPick: string) {
     if (!wsApi) return;
-
-    try {
-      setActiveProjectId(projectIdToPick);
-
-      const projectApi = (wsApi as any).project ?? (wsApi as any).projects;
-      const setFn = projectApi?.setProject ?? projectApi?.selectProject;
-      if (!setFn) throw new Error("Geen setProject functie gevonden.");
-
-      await setFn.call(projectApi, projectIdToPick);
-
-      const modelApi = (wsApi as any).model ?? (wsApi as any).models;
-      const getModelsFn =
-        modelApi?.getModels ??
-        modelApi?.listModels ??
-        modelApi?.getAllModels;
-
-      if (!getModelsFn) throw new Error("Geen getModels functie gevonden.");
-
-      const models = await getModelsFn.call(modelApi);
-      console.log("Models:", models);
-
-      const viewerApi = (wsApi as any).viewer ?? (wsApi as any).embed;
-      const loadFn =
-        viewerApi?.loadModels ??
-        viewerApi?.openModels ??
-        viewerApi?.setModels;
-
-      if (!loadFn) {
-        console.warn("Geen loadModels/openModels/setModels functie gevonden.");
-        return;
-      }
-
-      const modelIds = (models ?? [])
-        .map((m: any) => m.id ?? m.modelId)
-        .filter(Boolean);
-
-      await loadFn.call(viewerApi, modelIds.length ? modelIds : models);
-    } catch (e) {
-      console.error("Project kiezen / models laden faalde:", e);
-    }
+    setActiveProjectId(projectIdToPick);
   }
 
   // ---------------------------
@@ -384,9 +356,8 @@ export function Dashboard() {
           }}
         >
           <div style={{ fontSize: 12, opacity: 0.8 }}>
-            {modelsLoading && `Loading models... (Found ${filesCount} IFC files)`}
-            {!modelsLoading && !modelsError && loadedCount > 0 &&
-              `Loaded ${loadedCount} models (mapped ${mappedCount})`}
+            {modelsLoading && `Loading models... (Found ${modelsFoundCount} models)`}
+            {!modelsLoading && !modelsError && loadedCount > 0 && `Loaded ${loadedCount} models`}
             {modelsError && `Model load error: ${modelsError}`}
           </div>
 
@@ -430,7 +401,7 @@ export function Dashboard() {
             <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
               <TrimbleViewer
                 projectId={projectId}
-                onApiReady={setWsApi}
+                onApiReady={(api) => setWsApi((prev) => prev ?? api)}
                 onViewerSelectionChanged={(data) => {
                   // later: map viewer selection -> selectedIds
                   console.log("Viewer selection changed:", data);

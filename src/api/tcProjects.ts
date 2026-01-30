@@ -1,4 +1,6 @@
-const PROJECTS_ENDPOINT = "https://app21.connect.trimble.com/tc/api/2.0/projects";
+import { TC_API_BASE } from "./tcConfig";
+
+const PROJECTS_ENDPOINT = `${TC_API_BASE}/projects`;
 
 export type TcProject = {
   id: string;
@@ -30,6 +32,7 @@ function normalizeProjects(payload: unknown): TcProject[] {
 }
 
 export async function fetchProjects(accessToken: string): Promise<TcProject[]> {
+  console.log("[TC API][projects] GET", PROJECTS_ENDPOINT);
   const response = await fetch(PROJECTS_ENDPOINT, {
     method: "GET",
     headers: {

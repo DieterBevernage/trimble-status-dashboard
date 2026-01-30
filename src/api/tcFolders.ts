@@ -1,4 +1,4 @@
-const BASE_URL = "https://app21.connect.trimble.com/tc/api/2.0";
+import { TC_API_BASE } from "./tcConfig";
 
 export type TcFolder = {
   id: string;
@@ -34,6 +34,7 @@ function normalizeList(payload: unknown): unknown[] {
 }
 
 async function fetchJson(url: string, accessToken: string): Promise<unknown> {
+  console.log("[TC API][folders] GET", url);
   const response = await fetch(url, {
     method: "GET",
     headers: {
@@ -51,7 +52,7 @@ async function fetchJson(url: string, accessToken: string): Promise<unknown> {
 }
 
 export async function listRootFolders(projectId: string, accessToken: string): Promise<TcFolder[]> {
-  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/folders`;
+  const url = `${TC_API_BASE}/projects/${encodeURIComponent(projectId)}/folders`;
   const json = await fetchJson(url, accessToken);
   const list = normalizeList(json);
 
@@ -68,7 +69,7 @@ export async function listFolderChildren(
   folderId: string,
   accessToken: string
 ): Promise<TcFolder[]> {
-  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/folders?parentFolderId=${encodeURIComponent(folderId)}`;
+  const url = `${TC_API_BASE}/projects/${encodeURIComponent(projectId)}/folders?parentFolderId=${encodeURIComponent(folderId)}`;
   const json = await fetchJson(url, accessToken);
   const list = normalizeList(json);
 
@@ -85,7 +86,7 @@ export async function listFolderFiles(
   folderId: string,
   accessToken: string
 ): Promise<TcFile[]> {
-  const url = `${BASE_URL}/projects/${encodeURIComponent(projectId)}/files?parentFolderId=${encodeURIComponent(folderId)}`;
+  const url = `${TC_API_BASE}/projects/${encodeURIComponent(projectId)}/files?parentFolderId=${encodeURIComponent(folderId)}`;
   const json = await fetchJson(url, accessToken);
   const list = normalizeList(json);
 
@@ -127,5 +128,5 @@ export async function resolveFolderPath(
 }
 
 export function getTcFoldersBaseUrl(): string {
-  return BASE_URL;
+  return TC_API_BASE;
 }
