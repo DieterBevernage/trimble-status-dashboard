@@ -25,7 +25,8 @@ export function ElementsPanel({
   const selectedSet = React.useMemo(() => new Set(selectedIds), [selectedIds]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0,
+overflow: "hidden", }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <div style={{ fontWeight: 600 }}>Elementenlijst</div>
 
@@ -48,13 +49,50 @@ export function ElementsPanel({
         </div>
       </div>
 
-      <div style={{ overflow: "auto", border: "1px solid #eee", borderRadius: 8 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ textAlign: "left", background: "#fafafa" }}>
-              <th style={{ padding: 8 }}>Element</th>
-              <th style={{ padding: 8 }}>Model</th>
-              <th style={{ padding: 8 }}>Status</th>
+      <div  style={{  flex: 1, minHeight: 0,  overflow: "auto",  border: "1px solid #cac8c8", borderRadius: 8,  }}
+>
+        <table style={{ width: "100%", borderCollapse: "collapse", flex: 1  }}>
+          <thead >
+
+            <tr style={{ textAlign: "left" }}>
+
+              <th
+                style={{
+                  padding: 8,
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 3,
+                  background: "#ededed",
+                  boxShadow: "0 2px 0 #ddd", // 👈 vaste bottom line
+
+                }}
+              >
+                Element
+              </th>
+              <th
+                style={{
+                  padding: 8,
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 2,
+                  background: "#ededed",
+
+                }}
+              >
+                Model
+              </th>
+              <th
+                style={{
+                  padding: 8,
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 2,
+                  background: "#ededed",
+
+                }}
+              >
+                Status
+              </th>
             </tr>
           </thead>
 
@@ -90,7 +128,7 @@ export function ElementsPanel({
         </table>
       </div>
 
-      <div style={{ fontSize: 12, opacity: 0.7 }}>
+      <div style={{ fontSize: 12, opacity: 0.7 , flexShrink: 0, marginTop: 2, }}>
         Tip: Click = 1 select, Ctrl+Click = toggle, Shift+Click = range
       </div>
     </div>

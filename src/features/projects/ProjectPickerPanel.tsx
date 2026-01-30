@@ -21,14 +21,14 @@ export function ProjectPickerPanel({ projects, activeProjectId, onPick }: Props)
   }, [projects, q]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%", padding: 8 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <div style={{ fontWeight: 600 }}>Projecten</div>
-        <input
+        
+        <input 
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Zoek project..."
-          style={{ flex: 1, padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6 }}
+          style={{ flex: 1, padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, fontSize: 16 }}
         />
       </div>
 

@@ -5,7 +5,6 @@ import {
   getConnectEmbedUrl,
   type WorkspaceAPI,
 } from "trimble-connect-workspace-api";
-import { listModels } from "../../api/tcModels";
 
 type Props = {
   projectId?: string | null;
@@ -18,9 +17,26 @@ const CONNECT_TIMEOUT_MS = 60000;
 
 export function TrimbleViewer({ projectId, onApiReady, onViewerSelectionChanged }: Props) {
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
+
   const apiRef = React.useRef<WorkspaceAPI | null>(null);
+  const didSetSrcRef = React.useRef(false);
+  const didConnectRef = React.useRef(false);
+
+  // refs om “stale callbacks” te vermijden zonder effect-deps
+  const onApiReadyRef = React.useRef<Props["onApiReady"]>(onApiReady);
+  const onSelRef = React.useRef<Props["onViewerSelectionChanged"]>(onViewerSelectionChanged);
+
+  React.useEffect(() => {
+    onApiReadyRef.current = onApiReady;
+  }, [onApiReady]);
+
+  React.useEffect(() => {
+    onSelRef.current = onViewerSelectionChanged;
+  }, [onViewerSelectionChanged]);
+
+  // init guard
   const lastInitKeyRef = React.useRef<string | null>(null);
-  const inflightRef = React.useRef(false);
+  const initInflightRef = React.useRef(false);
 
   React.useEffect(() => {
     window.addEventListener("message", dispatcherEventListener);
@@ -36,63 +52,48 @@ export function TrimbleViewer({ projectId, onApiReady, onViewerSelectionChanged 
 
     const tokenPrefix = accessToken.slice(0, 12);
     const initKey = `${nextProjectId}:${tokenPrefix}`;
-    if (inflightRef.current) return;
-    if (lastInitKeyRef.current === initKey) return;
-
-    inflightRef.current = true;
-    lastInitKeyRef.current = initKey;
+    if (initInflightRef.current) return;
+    if (lastInitKeyRef.current === initKey) {
+      console.log("[Viewer] init skipped (same project/token)");
+      return;
+    }
 
     const embedApi = (api as any).embed;
     if (!embedApi?.setTokens || !embedApi?.init3DViewer) {
       console.warn("[Viewer] embed.setTokens or embed.init3DViewer not available");
-      inflightRef.current = false;
       return;
     }
 
+    initInflightRef.current = true;
+    lastInitKeyRef.current = initKey;
+
     try {
       console.log("[Viewer] init3DViewer projectId=", nextProjectId);
-      console.log(
-        "[Viewer] project viewer url",
-        `https://web.connect.trimble.com/projects/${encodeURIComponent(nextProjectId)}/viewer/3d/?projectId=${encodeURIComponent(nextProjectId)}`
-      );
-
       await embedApi.setTokens({ accessToken });
-
-      const models = await listModels(nextProjectId, accessToken);
-      const modelIds = models.map((m) => m.id).filter(Boolean);
-      const singleVersionId = models.length === 1 ? models[0].versionId ?? null : null;
-
-      console.log("[Viewer] REST models found", modelIds.length);
-
-      if (modelIds.length > 0) {
-        await embedApi.init3DViewer({
-          projectId: nextProjectId,
-          modelId: modelIds.join(","),
-          ...(singleVersionId ? { versionId: singleVersionId } : {}),
-        });
-      } else {
-        await embedApi.init3DViewer({ projectId: nextProjectId });
-      }
-
+      await embedApi.init3DViewer({ projectId: nextProjectId });
       console.log("[Viewer] init3DViewer ok for projectId", nextProjectId);
-
-      const viewerApi = (api as any).viewer ?? {};
-      if (viewerApi.getModels) {
-        const loadedModels = await viewerApi.getModels();
-        console.log("[Viewer] viewer.getModels after init", loadedModels);
-      }
-
-      if (viewerApi.fitToView) {
-        await viewerApi.fitToView();
-      }
-    } catch (error) {
-      console.error("[Viewer] init3DViewer failed for projectId", nextProjectId, error);
-      lastInitKeyRef.current = null;
+    } catch (e) {
+      console.error("[Viewer] init3DViewer failed", e);
+      lastInitKeyRef.current = null; // allow retry after failure
     } finally {
-      inflightRef.current = false;
+      initInflightRef.current = false;
     }
   }, []);
 
+  // 1) iframe src zetten: één keer
+  React.useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    if (didSetSrcRef.current) return;
+
+    didSetSrcRef.current = true;
+
+    const url = EMBED_URL || getConnectEmbedUrl("prod");
+    iframe.src = url;
+    console.log("[Viewer] iframe src set", url);
+  }, []);
+
+  // 2) connect() één keer na load
   React.useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -100,12 +101,15 @@ export function TrimbleViewer({ projectId, onApiReady, onViewerSelectionChanged 
     let cancelled = false;
 
     const handleLoad = async () => {
+      if (didConnectRef.current) return; // prevent double connect
+      didConnectRef.current = true;
+
       try {
         const api = await connect(
           iframe,
           (event: string, data: unknown) => {
             if (event === "viewer.onSelectionChanged") {
-              onViewerSelectionChanged?.(data);
+              onSelRef.current?.(data);
             }
           },
           CONNECT_TIMEOUT_MS
@@ -116,31 +120,34 @@ export function TrimbleViewer({ projectId, onApiReady, onViewerSelectionChanged 
         apiRef.current = api;
         console.log("[Viewer] connect ok");
 
+        onApiReadyRef.current?.(api);
+
+        // init meteen als we al een projectId hebben
         if (projectId) {
           await initViewerForProject(api, projectId);
         }
-
-        onApiReady?.(api);
-      } catch (error) {
-        console.error("[Viewer] connect/init failed", error);
+      } catch (e) {
+        console.error("[Viewer] connect failed", e);
+        didConnectRef.current = false; // allow retry on reload
       }
     };
 
     iframe.addEventListener("load", handleLoad);
-    iframe.src = EMBED_URL || getConnectEmbedUrl("prod");
-
     return () => {
       cancelled = true;
       iframe.removeEventListener("load", handleLoad);
     };
-  }, [initViewerForProject, onApiReady, onViewerSelectionChanged]);
+    // LET OP: geen dependencies -> we willen dit niet opnieuw door re-renders
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // 3) projectId changes => init3DViewer zonder iframe reload
   React.useEffect(() => {
     const api = apiRef.current;
     if (!api || !projectId) return;
 
-    initViewerForProject(api, projectId).catch((error) => {
-      console.error("[Viewer] init3DViewer failed", error);
+    initViewerForProject(api, projectId).catch((e) => {
+      console.error("[Viewer] init3DViewer failed", e);
     });
   }, [projectId, initViewerForProject]);
 
@@ -149,7 +156,7 @@ export function TrimbleViewer({ projectId, onApiReady, onViewerSelectionChanged 
       ref={iframeRef}
       title="Trimble Connect Viewer"
       style={{ width: "100%", height: "100%", border: 0, borderRadius: 8 }}
-      allow="clipboard-read; clipboard-write"
+      allow="clipboard-read; clipboard-write; fullscreen; xr-spatial-tracking"
     />
   );
 }

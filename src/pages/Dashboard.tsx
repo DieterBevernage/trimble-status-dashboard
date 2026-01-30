@@ -13,6 +13,9 @@ import { makeDemoElements, makeDemoHistory } from "../data/demoData";
 import { listFolderFiles, resolveFolderPath } from "../api/tcFolders";
 import { listModels } from "../api/tcModels";
 
+// TEMPORARILY DISABLED: deep IFC/model probing causes CORS errors
+const ENABLE_DEEP_FETCH = false;
+
 export function Dashboard() {
   const location = useLocation();
 
@@ -26,6 +29,7 @@ export function Dashboard() {
 
   const projectId = queryProjectId ?? storedProjectId ?? null;
   const dossierNummer = queryDossierNummer ?? storedDossierNummer ?? null;
+
 
   // ---------------------------
   // DATA (demo)
@@ -187,6 +191,7 @@ export function Dashboard() {
 
   // Debug: resolve Productie/IFC folder and log mapped models
   React.useEffect(() => {
+    if (!ENABLE_DEEP_FETCH) return;
     if (!projectId || !accessToken) return;
 
     const tokenPrefix = accessToken.slice(0, 12);
@@ -323,61 +328,52 @@ export function Dashboard() {
   // LAYOUT (geen globale scrollbars)
   // ---------------------------
   return (
-    <div style={{ height: "100vh", width: "100vw", overflow: "hidden" }}>
+    <div style={{ height: "100vh", width: "100vw", overflow: "hidden",}}>
       <div
         style={{
           height: "100%",
           width: "100%",
-          display: "flex",
-          flexDirection: "column",
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)", // links | rechts
           gap: 8,
-          padding: 8,
+          paddingLeft: 8,
+          paddingRight: 8,
+          paddingTop: 8,
+          paddingBottom: 8,
           boxSizing: "border-box",
           minHeight: 0,
+          minWidth: 0,
         }}
       >
-        <div style={{ fontSize: 12, opacity: 0.7 }}>
-          Active projectId: {projectId ?? "-"} | dossier: {dossierNummer ?? "-"}
-        </div>
-
-        {/* TOP: Viewer (50%) */}
+        {/* ================= LEFT COLUMN ================= */}
         <div
           style={{
-            flex: "0 0 50%",
             minHeight: 0,
+            minWidth: 0,
+            position: "relative",
             border: "1px solid #ccc",
             borderRadius: 8,
-            padding: 8,
-            boxSizing: "border-box",
             overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
+            display: "grid",
+            gridTemplateRows: "auto minmax(0, 3fr) minmax(0, 1fr)",
+            background: "white",
           }}
         >
-          <div style={{ fontSize: 12, opacity: 0.8 }}>
-            {modelsLoading && `Loading models... (Found ${modelsFoundCount} models)`}
-            {!modelsLoading && !modelsError && loadedCount > 0 && `Loaded ${loadedCount} models`}
-            {modelsError && `Model load error: ${modelsError}`}
-          </div>
+          {/* Header */}
+          <div
+            style={{
+              padding: 8,
+              borderBottom: "1px solid #eee",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>Projectpicker</div>
 
-          {/* Viewer toolbar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ fontWeight: 600 }}>Viewer</div>
-
-            <div style={{ fontSize: 12, opacity: 0.7 }}>
-              API: {wsApi ? "Connected OK" : "Connecting..."}
-            </div>
-
-            {activeProjectId && (
-              <div style={{ fontSize: 12, opacity: 0.7 }}>
-                Project: {projects.find((p) => p.id === activeProjectId)?.name ?? activeProjectId}
-              </div>
-            )}
-
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <div style={{ marginLeft: "auto" }}>
               <button
-                onClick={() => setShowProjectPicker((v) => !v)}
+                onClick={() => setShowProjectPicker(v => !v)}
                 disabled={!wsApi}
                 style={{ padding: "6px 10px" }}
               >
@@ -386,48 +382,8 @@ export function Dashboard() {
             </div>
           </div>
 
-          {/* Viewer content */}
-          <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 8 }}>
-            {showProjectPicker && (
-              <div style={{ width: 320, flexShrink: 0, minHeight: 0 }}>
-                <ProjectPickerPanel
-                  projects={projects}
-                  activeProjectId={activeProjectId}
-                  onPick={pickProject}
-                />
-              </div>
-            )}
-
-            <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-              <TrimbleViewer
-                projectId={projectId}
-                onApiReady={(api) => setWsApi((prev) => prev ?? api)}
-                onViewerSelectionChanged={(data) => {
-                  // later: map viewer selection -> selectedIds
-                  console.log("Viewer selection changed:", data);
-                }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* BOTTOM: List + Timeline (50%) */}
-        <div style={{ flex: "0 0 50%", minHeight: 0, display: "flex", gap: 8 }}>
           {/* Elementenlijst */}
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              minHeight: 0,
-              border: "1px solid #ccc",
-              borderRadius: 8,
-              padding: 8,
-              boxSizing: "border-box",
-              overflow: "hidden",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
+          <div style={{ minHeight: 0, overflow: "hidden", padding: 8 }}>
             {dossierNummer ? (
               <ElementsPanel
                 elements={elements}
@@ -437,37 +393,157 @@ export function Dashboard() {
                 onApplyStatusBulk={applyStatusBulk}
               />
             ) : (
-              <div style={{ padding: 10, opacity: 0.7 }}>Geen dossier mapping, status blijft leeg.</div>
+              <div style={{ opacity: 0.7 }}>Geen dossier mapping</div>
             )}
           </div>
 
           {/* Tijdlijn */}
           <div
             style={{
-              width: 360,
-              flexShrink: 0,
               minHeight: 0,
-              border: "1px solid #ccc",
-              borderRadius: 8,
               padding: 8,
               boxSizing: "border-box",
-              overflow: "hidden",
-              display: "flex",
-              flexDirection: "column",
+              overflow: "hidden", 
+                        // belangrijk: kader blijft proper
             }}
           >
-            {dossierNummer ? (
-              <TimelinePanel
-                selectedIds={selectedIds}
-                activeId={activeId}
-                historyByElementId={historyById}
+            <div
+              style={{
+                height: "100%",
+                border: "1px solid #cac8c8",
+                borderRadius: 8,
+
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+                background: "#f5f5f5"  
+              }}
+            >
+              {/* Scrollbare inhoud */}
+              <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 8 }}>
+                {dossierNummer ? (
+                  <TimelinePanel
+                    selectedIds={selectedIds}
+                    activeId={activeId}
+                    historyByElementId={historyById}
+                  />
+                ) : (
+                  <div style={{ opacity: 0.7 }}>Geen dossier mapping, status blijft leeg.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ===== Projectpicker overlay ===== */}
+          {showProjectPicker && (
+            <>
+              <div
+                onClick={() => setShowProjectPicker(false)}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  zIndex: 40,
+                }}
               />
-            ) : (
-              <div style={{ padding: 10, opacity: 0.7 }}>Geen dossier mapping, status blijft leeg.</div>
-            )}
+              <div
+                style={{
+                  position: "absolute",
+                  top: 60,
+                  left: 8,
+                  right: 8,
+                  bottom: 5,
+                  zIndex: 50,
+                  background: "white",
+                  border: "1px solid #ccc",
+                  borderRadius: 8,
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <div
+                  style={{
+                    padding: 8,
+                    borderBottom: "1px solid #eee",
+                    display: "flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ fontWeight: 600 }}>Projecten</div>
+                  <button
+                    onClick={() => setShowProjectPicker(false)}
+                    style={{ marginLeft: "auto" }}
+                  >
+                    Sluiten
+                  </button>
+                </div>
+
+                <div style={{ flex: 1, overflow: "auto" }}>
+                  <ProjectPickerPanel
+                    projects={projects}
+                    activeProjectId={activeProjectId}
+                    onPick={(id) => {
+                      pickProject(id);
+                      setShowProjectPicker(false);
+                    }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ================= RIGHT COLUMN ================= */}
+        <div
+          style={{
+            minHeight: 0,
+            minWidth: 0,
+            border: "1px solid #ccc",
+            borderRadius: 8,
+            overflow: "hidden",
+            display: "grid",
+            gridTemplateRows: "auto minmax(0, 1fr) auto", // toolbar | viewer | footer
+            background: "white",
+          }}
+        >
+          {/* Viewer toolbar */}
+          <div
+            style={{
+              padding: 8,
+              borderBottom: "1px solid #eee",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 700, color: "#c00" }}>TRIMBLEVIEWER</div>
+
+
+
+            <div style={{ fontWeight: 600 }}>
+              Project: {projectId ?? "-"} | dossier: {dossierNummer ?? "-"}
+            </div>
+
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              API: {wsApi ? "Connected OK" : "Connecting..."}
+            </div>
+
+            <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>
+              {modelsLoading && "Loading models..."}
+              {modelsError && `Error: ${modelsError}`}
+            </div>
+          </div>
+
+          {/* Viewer */}
+          <div style={{ minHeight: 0 }}>
+            <TrimbleViewer
+              projectId={projectId}
+              onApiReady={(api) => setWsApi(prev => prev ?? api)}
+            />
           </div>
         </div>
       </div>
     </div>
+
   );
 }
