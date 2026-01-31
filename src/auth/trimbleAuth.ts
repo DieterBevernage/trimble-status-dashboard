@@ -28,6 +28,7 @@ function requireEnv(value: string | undefined, name: string): string {
 
 export function getAuthConfig() {
   const redirectUri = resolveRedirectUri();
+  console.log("redirect", redirectUri);
 
   return {
     clientId: requireEnv(CLIENT_ID, "VITE_TRIMBLE_CLIENT_ID"),
