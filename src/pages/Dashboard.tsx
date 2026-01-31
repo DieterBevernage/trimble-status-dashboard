@@ -1,5 +1,5 @@
 import React from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import type { WorkspaceAPI } from "trimble-connect-workspace-api";
 
 import { TrimbleViewer } from "../features/viewer/TrimbleViewer";
@@ -10,6 +10,7 @@ import { TimelinePanel } from "../features/timeline/TimelinePanel";
 
 import type { ElementRecord, Status, StatusChange } from "../core/types/domain";
 import { makeDemoElements, makeDemoHistory } from "../data/demoData";
+import { fetchProjects } from "../api/tcProjects";
 import { listFolderFiles, resolveFolderPath } from "../api/tcFolders";
 import { listModels } from "../api/tcModels";
 
@@ -18,6 +19,7 @@ const ENABLE_DEEP_FETCH = false;
 
 export function Dashboard() {
   const location = useLocation();
+  const navigate = useNavigate();
 
   const params = new URLSearchParams(location.search);
   const queryProjectId = params.get("projectId");
@@ -27,7 +29,6 @@ export function Dashboard() {
   const storedDossierNummer = sessionStorage.getItem("activeDossierNummer");
   const accessToken = sessionStorage.getItem("tc_access_token");
 
-  const projectId = queryProjectId ?? storedProjectId ?? null;
   const dossierNummer = queryDossierNummer ?? storedDossierNummer ?? null;
 
 
@@ -68,7 +69,12 @@ export function Dashboard() {
   // ---------------------------
   const [wsApi, setWsApi] = React.useState<WorkspaceAPI | null>(null);
   const [projects, setProjects] = React.useState<TcProject[]>([]);
-  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
+  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(
+    () => queryProjectId ?? storedProjectId ?? null
+  );
+  const [projectsLoading, setProjectsLoading] = React.useState(false);
+  const [projectsError, setProjectsError] = React.useState<string | null>(null);
+  const [viewerModels, setViewerModels] = React.useState<unknown[]>([]);
 
   const [modelsLoading, setModelsLoading] = React.useState(false);
   const [modelsError, setModelsError] = React.useState<string | null>(null);
@@ -79,11 +85,49 @@ export function Dashboard() {
   const inflightRef = React.useRef(false);
   const folderProbeKeyRef = React.useRef<string | null>(null);
   const folderProbeInflightRef = React.useRef(false);
+  const lastProjectIdRef = React.useRef<string | null>(null);
 
   // UI toggle: project picker tonen of verbergen
-  const [showProjectPicker, setShowProjectPicker] = React.useState(true);
+  const [showProjectPicker, setShowProjectPicker] = React.useState(false);
 
   // Embedded viewer context: skip Workspace project listing (not applicable)
+  React.useEffect(() => {
+    if (activeProjectId !== null) return;
+    setActiveProjectId(queryProjectId ?? storedProjectId ?? null);
+  }, [activeProjectId, queryProjectId, storedProjectId]);
+
+  const effectiveProjectId = activeProjectId;
+
+  React.useEffect(() => {
+    if (!accessToken) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setProjectsLoading(true);
+      setProjectsError(null);
+
+      try {
+        const result = await fetchProjects(accessToken);
+        if (!cancelled) {
+          setProjects(result);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setProjectsError(error instanceof Error ? error.message : String(error));
+          setProjects([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setProjectsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
 
   // Tijdelijke debug: auth + projectcontext checken zodra API klaar is
   React.useEffect(() => {
@@ -122,9 +166,9 @@ export function Dashboard() {
 
   // Auto-load models via viewer API
   React.useEffect(() => {
-    if (!wsApi || !projectId) return;
+    if (!wsApi || !effectiveProjectId) return;
 
-    const loadKey = projectId;
+    const loadKey = effectiveProjectId;
     if (inflightRef.current) return;
     if (lastLoadKeyRef.current === loadKey) return;
 
@@ -187,15 +231,15 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [wsApi, projectId]);
+  }, [wsApi, effectiveProjectId]);
 
   // Debug: resolve Productie/IFC folder and log mapped models
   React.useEffect(() => {
     if (!ENABLE_DEEP_FETCH) return;
-    if (!projectId || !accessToken) return;
+    if (!effectiveProjectId || !accessToken) return;
 
     const tokenPrefix = accessToken.slice(0, 12);
-    const probeKey = `${projectId}:${tokenPrefix}`;
+    const probeKey = `${effectiveProjectId}:${tokenPrefix}`;
     if (folderProbeInflightRef.current) return;
     if (folderProbeKeyRef.current === probeKey) return;
 
@@ -205,20 +249,24 @@ export function Dashboard() {
     let cancelled = false;
 
     (async () => {
-      console.log("[IFC] resolve folder Productie/IFC start", { projectId });
+      console.log("[IFC] resolve folder Productie/IFC start", { projectId: effectiveProjectId });
       try {
-        const folderId = await resolveFolderPath(projectId, ["Productie", "IFC"], accessToken);
+        const folderId = await resolveFolderPath(
+          effectiveProjectId,
+          ["Productie", "IFC"],
+          accessToken
+        );
         if (!folderId) {
-          console.warn("[IFC] folder Productie/IFC not found for projectId", projectId);
+          console.warn("[IFC] folder Productie/IFC not found for projectId", effectiveProjectId);
           return;
         }
 
         console.log("[IFC] folder Productie/IFC found", folderId);
 
-        const ifcFiles = await listFolderFiles(projectId, folderId, accessToken);
+        const ifcFiles = await listFolderFiles(effectiveProjectId, folderId, accessToken);
         console.log("[IFC] IFC files found", ifcFiles.length, ifcFiles);
 
-        const models = await listModels(projectId, accessToken);
+        const models = await listModels(effectiveProjectId, accessToken);
         const fileIds = new Set(ifcFiles.map((f) => f.id));
         const fileNames = new Set(ifcFiles.map((f) => f.name.toLowerCase()));
 
@@ -243,12 +291,29 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, accessToken]);
+  }, [effectiveProjectId, accessToken]);
+
+  React.useEffect(() => {
+    if (!effectiveProjectId) return;
+    setSelectedIds([]);
+    setActiveId(null);
+    setLastAnchorId(null);
+    setViewerModels([]);
+    if (lastProjectIdRef.current && lastProjectIdRef.current !== effectiveProjectId) {
+      setShowProjectPicker(false);
+    }
+    lastProjectIdRef.current = effectiveProjectId;
+  }, [effectiveProjectId]);
 
   // Project selecteren -> modellen laden
   async function pickProject(projectIdToPick: string) {
-    if (!wsApi) return;
     setActiveProjectId(projectIdToPick);
+    sessionStorage.setItem("activeProjectId", projectIdToPick);
+    const dossierParam = dossierNummer ? `&dossierNummer=${encodeURIComponent(dossierNummer)}` : "";
+    navigate(`/dashboard?projectId=${encodeURIComponent(projectIdToPick)}${dossierParam}`, {
+      replace: true,
+    });
+    setShowProjectPicker(true);
   }
 
   // ---------------------------
@@ -403,8 +468,8 @@ export function Dashboard() {
               minHeight: 0,
               padding: 8,
               boxSizing: "border-box",
-              overflow: "hidden", 
-                        // belangrijk: kader blijft proper
+              overflow: "hidden",
+              // belangrijk: kader blijft proper
             }}
           >
             <div
@@ -416,7 +481,7 @@ export function Dashboard() {
                 overflow: "hidden",
                 display: "flex",
                 flexDirection: "column",
-                background: "#f5f5f5"  
+                background: "#f5f5f5"
               }}
             >
               {/* Scrollbare inhoud */}
@@ -482,10 +547,9 @@ export function Dashboard() {
                   <ProjectPickerPanel
                     projects={projects}
                     activeProjectId={activeProjectId}
-                    onPick={(id) => {
-                      pickProject(id);
-                      setShowProjectPicker(false);
-                    }}
+                    onPick={pickProject}
+                    loading={projectsLoading}
+                    error={projectsError}
                   />
                 </div>
               </div>
@@ -521,7 +585,7 @@ export function Dashboard() {
 
 
             <div style={{ fontWeight: 600 }}>
-              Project: {projectId ?? "-"} | dossier: {dossierNummer ?? "-"}
+              Project: {effectiveProjectId ?? "-"} | dossier: {dossierNummer ?? "-"}
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -531,14 +595,18 @@ export function Dashboard() {
             <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>
               {modelsLoading && "Loading models..."}
               {modelsError && `Error: ${modelsError}`}
+              {!modelsLoading && !modelsError && viewerModels.length > 0 && (
+                <>Loaded models: {viewerModels.length}</>
+              )}
             </div>
           </div>
 
           {/* Viewer */}
           <div style={{ minHeight: 0 }}>
             <TrimbleViewer
-              projectId={projectId}
-              onApiReady={(api) => setWsApi(prev => prev ?? api)}
+              projectId={effectiveProjectId}
+              onApiReady={(api) => setWsApi((prev) => prev ?? api)}
+              onViewerModelsChanged={(models) => setViewerModels(models)}
             />
           </div>
         </div>
